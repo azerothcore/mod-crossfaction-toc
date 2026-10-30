@@ -11,10 +11,13 @@ With this module:
   the majority of the (non-GM) players inside the instance. Ties go to the looter's faction.
 - **Everyone can loot it.** Inside the raid, any item listed in `player_factionchange_items` is visible
   and rollable for both factions. Equipping is still faction-locked.
-- **Exchange NPC.** The Argent Exchange Officer (creature `210000`) lists every item in the player's bags
-  that is locked to the other faction and swaps it for its counterpart from `player_factionchange_items`.
-  The new item takes the old one's bag slot and keeps its enchant and gems. An item still inside its
-  loot-trade window loses it after the exchange; the gossip option asks for confirmation in that case.
+- **Exchange NPC.** The Argent Exchange Officer (creature `210000`) lists the items in the player's bags
+  that are locked to the other faction and swaps each for its counterpart from `player_factionchange_items`.
+  The new item takes the old one's bag slot.
+  - Only items still within their loot trade window qualify: 2 hours of played time after looting, and
+    never enchanted or socketed (both end the window). This keeps the NPC to fresh raid loot.
+  - The exchanged item is no longer tradeable. The gossip option asks for confirmation before swapping.
+  - The trade window requires `Item.SetItemTradeable = 1` in `worldserver.conf` (the default).
 
 ## Requirements
 

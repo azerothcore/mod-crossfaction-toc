@@ -15,23 +15,11 @@
 #include "ScriptMgr.h"
 #include "ScriptedGossip.h"
 #include "StringFormat.h"
-#include <array>
 #include <unordered_map>
 
 namespace
 {
     constexpr uint32 MAP_TRIAL_OF_THE_CRUSADER = 649;
-
-    // Enchant slots carried over to the exchanged item; temporary and random property slots are left out
-    constexpr std::array<EnchantmentSlot, 6> CopiedEnchantSlots =
-    {
-        PERM_ENCHANTMENT_SLOT,
-        SOCK_ENCHANTMENT_SLOT,
-        SOCK_ENCHANTMENT_SLOT_2,
-        SOCK_ENCHANTMENT_SLOT_3,
-        BONUS_ENCHANTMENT_SLOT,
-        PRISMATIC_ENCHANTMENT_SLOT
-    };
 
     bool Enabled = false;
 
@@ -102,9 +90,14 @@ namespace
             (proto->HasFlag2(ITEM_FLAG2_FACTION_ALLIANCE) && team != TEAM_ALLIANCE);
     }
 
-    // Returns the counterpart entry the player can use in place of an item locked to the other faction, or 0
-    uint32 GetUsableCounterpart(Player const* player, ItemTemplate const* proto)
+    // Returns the counterpart entry the player can use in place of an item locked to the other faction, or 0.
+    // Only items still in their loot trade window qualify; enchanting or socketing an item also ends that window.
+    uint32 GetUsableCounterpart(Player const* player, Item const* item)
     {
+        if (!item->IsBOPTradable())
+            return 0;
+
+        ItemTemplate const* proto = item->GetTemplate();
         TeamId team = player->GetTeamId(true);
         if (!IsLockedToOtherFaction(proto, team))
             return 0;
@@ -217,18 +210,15 @@ public:
             if (options >= GOSSIP_MAX_MENU_ITEMS)
                 return;
 
-            uint32 counterpart = GetUsableCounterpart(player, item->GetTemplate());
+            uint32 counterpart = GetUsableCounterpart(player, item);
             if (!counterpart)
                 return;
 
             std::string text = Acore::StringFormat("{} -> {}", GetItemName(player, item->GetTemplate()),
                 GetItemName(player, sObjectMgr->GetItemTemplate(counterpart)));
 
-            if (item->IsBOPTradable())
-                AddGossipItemFor(player, GOSSIP_ICON_VENDOR, text, GOSSIP_SENDER_MAIN, item->GetGUID().GetCounter(),
-                    "The exchanged item can no longer be traded to the players who were eligible to loot it.", 0, false);
-            else
-                AddGossipItemFor(player, GOSSIP_ICON_VENDOR, text, GOSSIP_SENDER_MAIN, item->GetGUID().GetCounter());
+            AddGossipItemFor(player, GOSSIP_ICON_VENDOR, text, GOSSIP_SENDER_MAIN, item->GetGUID().GetCounter(),
+                "The exchanged item can no longer be traded to the players who were eligible to loot it.", 0, false);
 
             ++options;
         };
@@ -244,7 +234,7 @@ public:
                         addOption(item);
 
         if (!options)
-            ChatHandler(player->GetSession()).SendSysMessage("You carry no items of the other faction that can be exchanged.");
+            ChatHandler(player->GetSession()).SendSysMessage("You carry no items of the other faction that can be exchanged. Only items still within their loot trade window qualify.");
 
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
         return true;
@@ -259,7 +249,7 @@ public:
             return true;
 
         uint32 oldEntry = item->GetEntry();
-        uint32 newEntry = GetUsableCounterpart(player, item->GetTemplate());
+        uint32 newEntry = GetUsableCounterpart(player, item);
         if (!newEntry)
             return true;
 
@@ -271,10 +261,6 @@ public:
             player->SendEquipError(msg, nullptr, nullptr, newEntry);
             return true;
         }
-
-        std::array<uint32, CopiedEnchantSlots.size()> enchants;
-        for (std::size_t i = 0; i < CopiedEnchantSlots.size(); ++i)
-            enchants[i] = item->GetEnchantmentId(CopiedEnchantSlots[i]);
 
         uint8 bag = item->GetBagSlot();
         uint8 slot = item->GetSlot();
@@ -292,10 +278,6 @@ public:
         Item* newItem = player->StoreNewItem(dest, newEntry, true, Item::GenerateItemRandomPropertyId(newEntry));
         if (!newItem)
             return true;
-
-        for (std::size_t i = 0; i < CopiedEnchantSlots.size(); ++i)
-            if (enchants[i])
-                newItem->SetEnchantment(CopiedEnchantSlots[i], enchants[i], 0, 0);
 
         player->SendNewItem(newItem, 1, true, false);
         LOG_INFO("module", "mod-crossfaction-toc: {} exchanged item {} for {}", player->GetName(), oldEntry, newEntry);
