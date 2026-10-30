@@ -1,0 +1,19 @@
+#
+# Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license: https://github.com/azerothcore/azerothcore-wotlk/blob/master/LICENSE-AGPL3
+#
+
+[worldserver]
+
+########################################
+# Cross-faction Trial of the Crusader
+########################################
+#
+#    CrossFactionToC.Enable
+#        Description: In Trial of the Crusader, drop only the faction set matching the raid majority
+#                     and let every raid member loot it. Players exchange items of the other faction
+#                     for their own at the Argent Exchange Officer (creature 210000).
+#        Default:     1 - Enabled
+#                     0 - Disabled
+#
+
+CrossFactionToC.Enable = 1
