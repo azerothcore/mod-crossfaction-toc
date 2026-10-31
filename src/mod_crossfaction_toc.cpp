@@ -8,9 +8,11 @@
 #include "Config.h"
 #include "DatabaseEnv.h"
 #include "GossipDef.h"
+#include "Group.h"
 #include "Item.h"
 #include "Log.h"
 #include "LootMgr.h"
+#include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "Player.h"
@@ -125,7 +127,17 @@ namespace
         return itr->second;
     }
 
-    // Ties go to the looter's faction
+    // The looter rotates between kills, so it only breaks ties when the group leader is offline
+    TeamId GetTieBreakTeam(Player const* looter)
+    {
+        if (Group const* group = looter->GetGroup())
+            if (Player const* leader = ObjectAccessor::FindConnectedPlayer(group->GetLeaderGUID()))
+                return leader->GetTeamId(true);
+
+        return looter->GetTeamId(true);
+    }
+
+    // Ties go to the group leader's faction
     TeamId GetMajorityTeam(Player const* looter)
     {
         uint32 alliance = 0;
@@ -144,7 +156,7 @@ namespace
         }
 
         if (alliance == horde)
-            return looter->GetTeamId(true);
+            return GetTieBreakTeam(looter);
 
         return alliance > horde ? TEAM_ALLIANCE : TEAM_HORDE;
     }

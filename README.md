@@ -8,7 +8,10 @@ one faction, so a mixed raid gets two sets and each player only sees half of the
 With this module:
 
 - **One set drops.** References that contain only items of one faction roll only when that faction is
-  the majority of the (non-GM) players inside the instance. Ties go to the looter's faction.
+  the majority of the (non-GM) players inside the instance. Ties go to the group leader's faction (the
+  looter's if the leader is offline), so an evenly split raid gets the same faction's loot all run.
+  The Swift Alliance Steed and Swift Horde Wolf from the 10-player heroic tribute chest are not
+  references, so both still drop and each faction loots its own.
 - **Everyone can loot it.** Inside the raid, any item listed in `player_factionchange_items` is visible
   and rollable for both factions. Equipping is still faction-locked.
 - **Exchange NPC.** The Argent Exchange Officer (creature `210000`, a blood elf Argent Peacekeeper) opens
