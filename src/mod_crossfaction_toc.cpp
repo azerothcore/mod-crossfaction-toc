@@ -18,6 +18,8 @@
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "ScriptedGossip.h"
+#include "StringConvert.h"
+#include "Tokenize.h"
 #include "WorldPacket.h"
 #include <unordered_map>
 #include <vector>
@@ -232,6 +234,21 @@ namespace
         player->GetSession()->SendPacket(&data);
     }
 
+    // Item keeps its looter list private, so read the copy the core persists for it
+    AllowedLooterSet GetAllowedLooters(Item const* item)
+    {
+        AllowedLooterSet looters;
+
+        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_ITEM_BOP_TRADE);
+        stmt->SetData(0, item->GetGUID().GetCounter());
+        if (PreparedQueryResult result = CharacterDatabase.Query(stmt))
+            for (std::string_view guidStr : Acore::Tokenize((*result)[0].Get<std::string_view>(), ' ', false))
+                if (Optional<ObjectGuid::LowType> guid = Acore::StringTo<ObjectGuid::LowType>(guidStr))
+                    looters.insert(ObjectGuid::Create<HighGuid::Player>(*guid));
+
+        return looters;
+    }
+
     void ExchangeItem(Player* player, Item* item, uint32 newEntry)
     {
         uint32 oldEntry = item->GetEntry();
@@ -244,6 +261,9 @@ namespace
             player->SendEquipError(msg, nullptr, nullptr, newEntry);
             return;
         }
+
+        uint32 lootedPlayedTime = item->GetUInt32Value(ITEM_FIELD_CREATE_PLAYED_TIME);
+        AllowedLooterSet looters = GetAllowedLooters(item);
 
         uint8 bag = item->GetBagSlot();
         uint8 slot = item->GetSlot();
@@ -258,9 +278,13 @@ namespace
             return;
         }
 
-        Item* newItem = player->StoreNewItem(dest, newEntry, true, Item::GenerateItemRandomPropertyId(newEntry));
+        // Passing the looters keeps the item tradeable to them; the core starts a fresh window, so restore the original one
+        Item* newItem = player->StoreNewItem(dest, newEntry, true, Item::GenerateItemRandomPropertyId(newEntry), looters);
         if (!newItem)
             return;
+
+        if (newItem->IsBOPTradable())
+            newItem->SetUInt32Value(ITEM_FIELD_CREATE_PLAYED_TIME, lootedPlayedTime);
 
         player->SendNewItem(newItem, 1, true, false);
         LOG_INFO("module", "mod-crossfaction-toc: {} exchanged item {} for {}", player->GetName(), oldEntry, newEntry);

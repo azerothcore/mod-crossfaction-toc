@@ -20,7 +20,9 @@ With this module:
   and the new item takes the old one's bag slot. Selling to this NPC is disabled.
   - Only items still within their loot trade window qualify: 2 hours of played time after looting, and
     never enchanted or socketed (both end the window). This keeps the NPC to fresh raid loot.
-  - The exchanged item is no longer tradeable. The NPC's gossip text warns about this.
+  - The exchanged item stays tradeable to the same players for the rest of the original window, so
+    swapping does not stop the loot from being passed on. Nobody can swap an item back, since the
+    counterpart belongs to their own faction.
   - The trade window requires `Item.SetItemTradeable = 1` in `worldserver.conf` (the default).
   - Texts are localized: chat and error strings in `module_string(_locale)`, the gossip text in
     `npc_text(_locale)` (the client requests it by ID), and the name in `creature_template_locale`.
