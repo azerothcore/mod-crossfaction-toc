@@ -2,6 +2,7 @@
  * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license: https://github.com/azerothcore/azerothcore-wotlk/blob/master/LICENSE-AGPL3
  */
 
+#include "AreaDefines.h"
 #include "Bag.h"
 #include "Chat.h"
 #include "Config.h"
@@ -19,8 +20,6 @@
 
 namespace
 {
-    constexpr uint32 MAP_TRIAL_OF_THE_CRUSADER = 649;
-
     bool Enabled = false;
 
     // Reference loot templates holding only items locked to a single faction
