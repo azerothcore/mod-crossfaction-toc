@@ -29,8 +29,9 @@ Core hook `GlobalScript::CanLootOtherFactionItem` (called from `LootItem::Allowe
 1. Place the module in `modules/` and re-run CMake.
 2. Apply `data/sql/db-world/updates/mod_crossfaction_toc_npc.sql` (or let the DB updater do it).
 3. Copy `conf/mod-crossfaction-toc.conf.dist` to your config folder.
-4. Spawn the NPC where you want it, e.g. inside the raid entrance or at the Argent Tournament grounds:
-   `.npc add 210000`
+The SQL spawns the NPC in the Trial of the Crusader entrance hall at the Argent Tournament Grounds.
+Add more spawns with `.npc add 210000`. Re-applying the SQL removes every spawn of the NPC and
+recreates only the entrance one.
 
 ## Configuration
 

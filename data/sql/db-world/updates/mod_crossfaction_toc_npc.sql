@@ -7,3 +7,9 @@ INSERT INTO `creature_template` (`entry`, `name`, `subname`, `IconName`, `gossip
 DELETE FROM `creature_template_model` WHERE `CreatureID` = @ENTRY;
 INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`) VALUES
 (@ENTRY, 0, 27020, 1, 1, 0);
+
+-- Trial of the Crusader entrance hall (Argent Tournament Grounds), in the gap of the east row of champions.
+-- No fixed guid so the spawn can't collide with another server's custom spawns.
+DELETE FROM `creature` WHERE `id` = @ENTRY;
+INSERT INTO `creature` (`id`, `map`, `spawnMask`, `phaseMask`, `position_x`, `position_y`, `position_z`, `orientation`, `spawntimesecs`) VALUES
+(@ENTRY, 571, 1, 1, 8528.9, 716.3, 558.61, 3.14, 300);
