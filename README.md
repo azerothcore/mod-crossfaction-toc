@@ -11,13 +11,16 @@ With this module:
   the majority of the (non-GM) players inside the instance. Ties go to the looter's faction.
 - **Everyone can loot it.** Inside the raid, any item listed in `player_factionchange_items` is visible
   and rollable for both factions. Equipping is still faction-locked.
-- **Exchange NPC.** The Argent Exchange Officer (creature `210000`) lists the items in the player's bags
-  that are locked to the other faction and swaps each for its counterpart from `player_factionchange_items`.
-  The new item takes the old one's bag slot.
+- **Exchange NPC.** The Argent Exchange Officer (creature `210000`, a blood elf Argent Peacekeeper) opens
+  a vendor window listing, for free, the counterpart of every item in the player's bags that is locked to
+  the other faction (from `player_factionchange_items`). "Buying" a counterpart swaps it for the original,
+  and the new item takes the old one's bag slot. Selling to this NPC is disabled.
   - Only items still within their loot trade window qualify: 2 hours of played time after looting, and
     never enchanted or socketed (both end the window). This keeps the NPC to fresh raid loot.
-  - The exchanged item is no longer tradeable. The gossip option asks for confirmation before swapping.
+  - The exchanged item is no longer tradeable. The NPC's gossip text warns about this.
   - The trade window requires `Item.SetItemTradeable = 1` in `worldserver.conf` (the default).
+  - Texts are localized: chat and error strings in `module_string(_locale)`, the gossip text in
+    `npc_text(_locale)` (the client requests it by ID), and the name in `creature_template_locale`.
 
 ## Requirements
 
@@ -27,7 +30,7 @@ Core hook `GlobalScript::CanLootOtherFactionItem` (called from `LootItem::Allowe
 ## Installation
 
 1. Place the module in `modules/` and re-run CMake.
-2. Apply `data/sql/db-world/updates/mod_crossfaction_toc_npc.sql` (or let the DB updater do it).
+2. Apply the files in `data/sql/db-world/updates/` (or let the DB updater do it).
 3. Copy `conf/mod-crossfaction-toc.conf.dist` to your config folder.
 The SQL spawns the NPC in the Trial of the Crusader entrance hall at the Argent Tournament Grounds.
 Add more spawns with `.npc add 210000`. Re-applying the SQL removes every spawn of the NPC and

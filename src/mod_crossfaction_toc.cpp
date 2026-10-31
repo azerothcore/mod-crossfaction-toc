@@ -12,14 +12,27 @@
 #include "Log.h"
 #include "LootMgr.h"
 #include "ObjectMgr.h"
+#include "Opcodes.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "ScriptedGossip.h"
-#include "StringFormat.h"
+#include "WorldPacket.h"
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
+    constexpr uint32 NPC_TEXT_EXCHANGE_OFFICER = 210000;
+    constexpr char const* MODULE_NAME = "mod-crossfaction-toc";
+    constexpr char const* EXCHANGE_SCRIPT_NAME = "npc_crossfaction_toc_exchange";
+
+    enum ModuleStrings : uint32
+    {
+        LANG_EXCHANGE_BROWSE      = 1,
+        LANG_EXCHANGE_NO_ITEMS    = 2,
+        LANG_EXCHANGE_UNAVAILABLE = 3
+    };
+
     bool Enabled = false;
 
     // Reference loot templates holding only items locked to a single faction
@@ -136,13 +149,109 @@ namespace
         return alliance > horde ? TEAM_ALLIANCE : TEAM_HORDE;
     }
 
-    std::string GetItemName(Player const* player, ItemTemplate const* proto)
+    std::string const& GetText(Player const* player, uint32 id)
     {
-        std::string name = proto->Name1;
-        if (ItemLocale const* locale = sObjectMgr->GetItemLocale(proto->ItemId))
-            ObjectMgr::GetLocaleString(locale->Name, player->GetSession()->GetSessionDbLocaleIndex(), name);
+        return *player->GetSession()->GetModuleString(MODULE_NAME, id);
+    }
 
-        return name;
+    void SendError(Player const* player, uint32 id)
+    {
+        ChatHandler(player->GetSession()).SendNotification(GetText(player, id));
+    }
+
+    bool IsExchangeOfficer(Creature const* creature)
+    {
+        return creature && creature->GetScriptName() == EXCHANGE_SCRIPT_NAME;
+    }
+
+    struct ExchangeOffer
+    {
+        Item* item;
+        uint32 counterpart;
+    };
+
+    // Vendor slots index into this list, so its order must stay the same between listing and buying
+    std::vector<ExchangeOffer> GetExchangeOffers(Player* player)
+    {
+        std::vector<ExchangeOffer> offers;
+        auto addOffer = [&](Item* item)
+        {
+            if (offers.size() >= MAX_VENDOR_ITEMS)
+                return;
+
+            if (uint32 counterpart = GetUsableCounterpart(player, item))
+                offers.push_back({ item, counterpart });
+        };
+
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+            if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                addOffer(item);
+
+        for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+            if (Bag* bag = player->GetBagByPos(bagSlot))
+                for (uint8 slot = 0; slot < bag->GetBagSize(); ++slot)
+                    if (Item* item = bag->GetItemByPos(slot))
+                        addOffer(item);
+
+        return offers;
+    }
+
+    // Lists the counterparts as free goods; buying one is intercepted and performs the exchange
+    void SendExchangeList(Player* player, Creature const* creature, std::vector<ExchangeOffer> const& offers)
+    {
+        WorldPacket data(SMSG_LIST_INVENTORY, 8 + 1 + offers.size() * 8 * 4);
+        data << creature->GetGUID();
+        data << uint8(offers.size());
+
+        uint32 vendorSlot = 0;
+        for (ExchangeOffer const& offer : offers)
+        {
+            ItemTemplate const* proto = sObjectMgr->GetItemTemplate(offer.counterpart);
+            data << uint32(++vendorSlot);
+            data << uint32(proto->ItemId);
+            data << uint32(proto->DisplayInfoID);
+            data << int32(-1); // Unlimited stock
+            data << uint32(0); // Price
+            data << uint32(proto->MaxDurability);
+            data << uint32(1); // Buy count
+            data << uint32(0); // Extended cost
+        }
+
+        player->GetSession()->SendPacket(&data);
+    }
+
+    void ExchangeItem(Player* player, Item* item, uint32 newEntry)
+    {
+        uint32 oldEntry = item->GetEntry();
+
+        // Full bags are fine since the new item takes the old one's slot; anything else (e.g. unique) is not
+        ItemPosCountVec check;
+        InventoryResult msg = player->CanStoreNewItem(NULL_BAG, NULL_SLOT, check, newEntry, 1);
+        if (msg != EQUIP_ERR_OK && msg != EQUIP_ERR_INVENTORY_FULL)
+        {
+            player->SendEquipError(msg, nullptr, nullptr, newEntry);
+            return;
+        }
+
+        uint8 bag = item->GetBagSlot();
+        uint8 slot = item->GetSlot();
+        player->DestroyItem(bag, slot, true);
+
+        ItemPosCountVec dest;
+        msg = player->CanStoreNewItem(bag, slot, dest, newEntry, 1);
+        if (msg != EQUIP_ERR_OK)
+        {
+            LOG_ERROR("module", "mod-crossfaction-toc: {} lost item {} exchanging it for {} (error {})", player->GetName(), oldEntry, newEntry, static_cast<uint32>(msg));
+            player->SendEquipError(msg, nullptr, nullptr, newEntry);
+            return;
+        }
+
+        Item* newItem = player->StoreNewItem(dest, newEntry, true, Item::GenerateItemRandomPropertyId(newEntry));
+        if (!newItem)
+            return;
+
+        player->SendNewItem(newItem, 1, true, false);
+        LOG_INFO("module", "mod-crossfaction-toc: {} exchanged item {} for {}", player->GetName(), oldEntry, newEntry);
     }
 }
 
@@ -194,92 +303,70 @@ public:
     }
 };
 
+class mod_crossfaction_toc_playerscript : public PlayerScript
+{
+public:
+    mod_crossfaction_toc_playerscript() : PlayerScript("mod_crossfaction_toc_playerscript", {
+        PLAYERHOOK_ON_BEFORE_BUY_ITEM_FROM_VENDOR,
+        PLAYERHOOK_CAN_SELL_ITEM
+    }) { }
+
+    void OnPlayerBeforeBuyItemFromVendor(Player* player, ObjectGuid vendorguid, uint32 vendorslot, uint32& itemEntry, uint8 /*count*/, uint8 /*bag*/, uint8 /*slot*/) override
+    {
+        if (!IsExchangeOfficer(player->GetMap()->GetCreature(vendorguid)))
+            return;
+
+        uint32 requested = itemEntry;
+        itemEntry = 0; // Skips the core vendor handling
+
+        Creature* creature = player->GetNPCIfCanInteractWith(vendorguid, UNIT_NPC_FLAG_VENDOR);
+        if (!creature)
+            return;
+
+        std::vector<ExchangeOffer> offers = GetExchangeOffers(player);
+        if (vendorslot < offers.size() && offers[vendorslot].counterpart == requested && !offers[vendorslot].item->IsInTrade())
+        {
+            ExchangeItem(player, offers[vendorslot].item, requested);
+            offers = GetExchangeOffers(player);
+        }
+        else
+            SendError(player, LANG_EXCHANGE_UNAVAILABLE);
+
+        SendExchangeList(player, creature, offers);
+    }
+
+    // Right-clicking a bag item while the exchange list is open would otherwise sell it
+    bool OnPlayerCanSellItem(Player* /*player*/, Item* /*item*/, Creature* creature) override
+    {
+        return !IsExchangeOfficer(creature);
+    }
+};
+
 class npc_crossfaction_toc_exchange : public CreatureScript
 {
 public:
-    npc_crossfaction_toc_exchange() : CreatureScript("npc_crossfaction_toc_exchange") { }
+    npc_crossfaction_toc_exchange() : CreatureScript(EXCHANGE_SCRIPT_NAME) { }
 
     bool OnGossipHello(Player* player, Creature* creature) override
     {
         ClearGossipMenuFor(player);
-
-        uint32 options = 0;
-        auto addOption = [&](Item const* item)
-        {
-            if (options >= GOSSIP_MAX_MENU_ITEMS)
-                return;
-
-            uint32 counterpart = GetUsableCounterpart(player, item);
-            if (!counterpart)
-                return;
-
-            std::string text = Acore::StringFormat("{} -> {}", GetItemName(player, item->GetTemplate()),
-                GetItemName(player, sObjectMgr->GetItemTemplate(counterpart)));
-
-            AddGossipItemFor(player, GOSSIP_ICON_VENDOR, text, GOSSIP_SENDER_MAIN, item->GetGUID().GetCounter(),
-                "The exchanged item can no longer be traded to the players who were eligible to loot it.", 0, false);
-
-            ++options;
-        };
-
-        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
-            if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-                addOption(item);
-
-        for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
-            if (Bag* bag = player->GetBagByPos(bagSlot))
-                for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
-                    if (Item* item = bag->GetItemByPos(slot))
-                        addOption(item);
-
-        if (!options)
-            ChatHandler(player->GetSession()).SendSysMessage("You carry no items of the other faction that can be exchanged. Only items still within their loot trade window qualify.");
-
-        SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
+        AddGossipItemFor(player, GOSSIP_ICON_VENDOR, GetText(player, LANG_EXCHANGE_BROWSE), GOSSIP_SENDER_MAIN, GOSSIP_ACTION_TRADE);
+        SendGossipMenuFor(player, NPC_TEXT_EXCHANGE_OFFICER, creature->GetGUID());
         return true;
     }
 
-    bool OnGossipSelect(Player* player, Creature* /*creature*/, uint32 /*sender*/, uint32 action) override
+    bool OnGossipSelect(Player* player, Creature* creature, uint32 /*sender*/, uint32 /*action*/) override
     {
         CloseGossipMenuFor(player);
 
-        Item* item = player->GetItemByGuid(ObjectGuid::Create<HighGuid::Item>(action));
-        if (!item || item->IsInTrade() || !Player::IsInventoryPos(item->GetPos()))
-            return true;
-
-        uint32 oldEntry = item->GetEntry();
-        uint32 newEntry = GetUsableCounterpart(player, item);
-        if (!newEntry)
-            return true;
-
-        // Full bags are fine since the new item takes the old one's slot; anything else (e.g. unique) is not
-        ItemPosCountVec check;
-        InventoryResult msg = player->CanStoreNewItem(NULL_BAG, NULL_SLOT, check, newEntry, 1);
-        if (msg != EQUIP_ERR_OK && msg != EQUIP_ERR_INVENTORY_FULL)
+        std::vector<ExchangeOffer> offers = GetExchangeOffers(player);
+        if (offers.empty())
         {
-            player->SendEquipError(msg, nullptr, nullptr, newEntry);
+            SendError(player, LANG_EXCHANGE_NO_ITEMS);
             return true;
         }
 
-        uint8 bag = item->GetBagSlot();
-        uint8 slot = item->GetSlot();
-        player->DestroyItem(bag, slot, true);
-
-        ItemPosCountVec dest;
-        msg = player->CanStoreNewItem(bag, slot, dest, newEntry, 1);
-        if (msg != EQUIP_ERR_OK)
-        {
-            LOG_ERROR("module", "mod-crossfaction-toc: {} lost item {} exchanging it for {} (error {})", player->GetName(), oldEntry, newEntry, static_cast<uint32>(msg));
-            player->SendEquipError(msg, nullptr, nullptr, newEntry);
-            return true;
-        }
-
-        Item* newItem = player->StoreNewItem(dest, newEntry, true, Item::GenerateItemRandomPropertyId(newEntry));
-        if (!newItem)
-            return true;
-
-        player->SendNewItem(newItem, 1, true, false);
-        LOG_INFO("module", "mod-crossfaction-toc: {} exchanged item {} for {}", player->GetName(), oldEntry, newEntry);
+        SendExchangeList(player, creature, offers);
         return true;
     }
 };
@@ -288,5 +375,6 @@ void AddSC_mod_crossfaction_toc()
 {
     new mod_crossfaction_toc_worldscript();
     new mod_crossfaction_toc_globalscript();
+    new mod_crossfaction_toc_playerscript();
     new npc_crossfaction_toc_exchange();
 }
